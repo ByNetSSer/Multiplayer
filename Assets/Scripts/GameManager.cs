@@ -7,7 +7,9 @@ public class GameManager : NetworkBehaviour
     private static GameManager instance;
 
     [SerializeField] private Transform playerPrefab;
+    [SerializeField] private NetworkObject chestPrefab;
     private readonly HashSet<ulong> spawnedPlayers = new();
+    private bool chestSpawned;
     private GUIStyle titleStyle;
     private GUIStyle bodyStyle;
     private GUIStyle buttonStyle;
@@ -31,7 +33,10 @@ public class GameManager : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         if (IsServer)
+        {
             NetworkManager.Singleton.OnClientDisconnectCallback += HandleClientDisconnected;
+            SpawnChest();
+        }
 
         if (!IsClient) return;
         RequestPlayerSpawnRpc();
@@ -44,12 +49,23 @@ public class GameManager : NetworkBehaviour
 
         // Permite iniciar otra sesión en la misma ejecución sin conservar IDs antiguos.
         spawnedPlayers.Clear();
+        chestSpawned = false;
     }
 
     private void HandleClientDisconnected(ulong clientId)
     {
         if (IsServer)
             spawnedPlayers.Remove(clientId);
+    }
+
+    private void SpawnChest()
+    {
+        if (chestSpawned || chestPrefab == null)
+            return;
+
+        NetworkObject chest = Instantiate(chestPrefab, new Vector3(0f, 0.75f, 4f), Quaternion.identity);
+        chest.Spawn(true);
+        chestSpawned = true;
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -60,7 +76,9 @@ public class GameManager : NetworkBehaviour
 
         Vector3 spawnPosition = new Vector3((ownerId % 4) * 2.2f - 3.3f, 1f, 0f);
         Transform player = Instantiate(playerPrefab, spawnPosition, Quaternion.identity);
-        player.GetComponent<NetworkObject>().SpawnWithOwnership(ownerId, true);
+        // Además de asignar propiedad, lo registra en ConnectedClients[ownerId].PlayerObject.
+        // El cofre usa ese registro para validar distancia y bloqueo de apertura.
+        player.GetComponent<NetworkObject>().SpawnAsPlayerObject(ownerId, true);
     }
 
     void Update()
@@ -92,8 +110,10 @@ public class GameManager : NetworkBehaviour
             string role = NetworkManager.Singleton.IsHost ? "HOST" :
                 NetworkManager.Singleton.IsServer ? "SERVIDOR" : "CLIENTE";
             GUILayout.Label($"Conectado como {role} · ID {NetworkManager.Singleton.LocalClientId}", bodyStyle);
-            GUILayout.Label("WASD: mover    ESPACIO: atacar al rival cercano", bodyStyle);
-            GUILayout.Label("El servidor valida rango, cooldown y daño.", bodyStyle);
+            GUILayout.Label("SIMULADOR DE RED: 200 ms + 25 ms jitter", bodyStyle);
+            GUILayout.Label("WASD: mover    ESPACIO: atacar", bodyStyle);
+            GUILayout.Label("E: mantener para abrir    F: agarrar/soltar", bodyStyle);
+            GUILayout.Label("Clic izquierdo: lanzar cubo", bodyStyle);
             GUILayout.Space(8f);
             if (GUILayout.Button("DESCONECTAR", buttonStyle, GUILayout.Height(34f)))
                 NetworkManager.Singleton.Shutdown();

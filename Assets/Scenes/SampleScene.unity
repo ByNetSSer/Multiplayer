@@ -178,6 +178,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
   playerPrefab: {fileID: 3703303637951152269, guid: 5186b81ec6109f04b961d6bc7491dccb, type: 3}
+  chestPrefab: {fileID: 920000000000000004, guid: c4e5700000004268ab2d45db0bcc196b, type: 3}
 --- !u!4 &106245718
 Transform:
   m_ObjectHideFlags: 0
@@ -696,8 +697,8 @@ MonoBehaviour:
     ServerListenAddress: 127.0.0.1
     ClientBindPort: 0
   DebugSimulator:
-    PacketDelayMS: 0
-    PacketJitterMS: 0
+    PacketDelayMS: 200
+    PacketJitterMS: 25
     PacketDropRate: 0
 --- !u!114 &2142124350
 MonoBehaviour:
