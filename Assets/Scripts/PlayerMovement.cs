@@ -5,9 +5,16 @@ public class PlayerMovement : NetworkBehaviour
 {
     [SerializeField] private float speed = 5f;
 
+    private PlayerCombat combat;
+
+    private void Awake()
+    {
+        combat = GetComponent<PlayerCombat>();
+    }
+
     void Update()
     {
-        if (!IsOwner) return;
+        if (!IsOwner || (combat != null && combat.IsDead)) return;
         Movement();
     }
 
