@@ -17,6 +17,9 @@ public class PlayerMovement : NetworkBehaviour
 
     void Update()
     {
+        // Los prefabs del Lab 10 usan una simulación por ticks con servidor
+        // autoritativo; este controlador legacy no debe moverlos en paralelo.
+        if (GetComponent<PredictedPlayerMovement>() != null) return;
         if (!IsOwner || (combat != null && combat.IsDead)) return;
         UpdateInterpolationDemo();
         Movement();

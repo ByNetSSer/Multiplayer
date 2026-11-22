@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Arranque de red del Lab 6: aprobación, selección de prefab por rol y ciclo de desconexión.
@@ -194,7 +195,10 @@ public class GameManager : MonoBehaviour
         float width = Mathf.Min(455f, Screen.width - 32f);
         GUILayout.BeginArea(new Rect(16f, 16f, width, 285f), GUI.skin.box);
         bool isLab09 = Lab09ReconnectCoordinator.IsActive;
-        GUILayout.Label(isLab09
+        bool isLab10 = SceneManager.GetActiveScene().name.StartsWith("Lab10");
+        GUILayout.Label(isLab10
+            ? "LAB 10 · PREDICCIÓN Y RECONCILIACIÓN"
+            : isLab09
             ? "LAB 09 · LA MOCHILA QUE VUELVE"
             : enableLab06Chest
                 ? "LAB 06 · COFRE DEL GUARDIÁN"
@@ -224,7 +228,12 @@ public class GameManager : MonoBehaviour
                 roleName = role.DisplayName;
 
             GUILayout.Label($"Rol: {roleName} · ID {NetworkManager.Singleton.LocalClientId}", bodyStyle);
-            if (isLab09)
+            if (isLab10)
+            {
+                GUILayout.Label("WASD mover · P alterna predicción local", bodyStyle);
+                GUILayout.Label("Red simulada: 250 ms · cruza X=4 para forzar reconciliación", bodyStyle);
+            }
+            else if (isLab09)
             {
                 GUILayout.Label("WASD mover · H talar · C crear cofre · E abrir", bodyStyle);
                 GUILayout.Label("Reingresa para recuperar la mochila por PlayerId", bodyStyle);

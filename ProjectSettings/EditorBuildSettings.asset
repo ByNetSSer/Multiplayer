@@ -14,6 +14,12 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/Lab07_InventoryPool.unity
     guid: 3b826d0a4145d69449dabdea5c943465
+  - enabled: 1
+    path: Assets/Scenes/Lab09_ReturningBackpack.unity
+    guid: e93456634b204324a39866677d6767da
+  - enabled: 1
+    path: Assets/Scenes/Lab10_PredictionReconciliation.unity
+    guid: 7de9e0afb3e7450aa629894ba0dfacee
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
