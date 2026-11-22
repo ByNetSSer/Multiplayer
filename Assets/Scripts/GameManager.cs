@@ -1,102 +1,192 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
-using System.Collections.Generic;
 
-public class GameManager : NetworkBehaviour
+/// <summary>
+/// Arranque de red del Lab 6: aprobación, selección de prefab por rol y ciclo de desconexión.
+/// </summary>
+public class GameManager : MonoBehaviour
 {
     private static GameManager instance;
 
-    [SerializeField] private Transform playerPrefab;
+    [Header("Prefabs registrados en NetworkManager")]
+    [SerializeField] private NetworkObject guardianPrefab;
+    [SerializeField] private NetworkObject explorerPrefab;
     [SerializeField] private NetworkObject chestPrefab;
-    private readonly HashSet<ulong> spawnedPlayers = new();
-    private bool chestSpawned;
+    [SerializeField] private bool enableLab06Chest = true;
+
+    private NetworkManager networkManager;
+    private ulong guardianClientId = ulong.MaxValue;
+    private NetworkObject activeChest;
+    private bool disconnectHandlerRegistered;
     private GUIStyle titleStyle;
     private GUIStyle bodyStyle;
     private GUIStyle buttonStyle;
-    
+
+    public static GameManager Instance => instance;
+    public bool ChestLabEnabled => enableLab06Chest;
+
     private void Awake()
     {
-        if (instance == null)
-        {
-            instance = this;
-            DontDestroyOnLoad(gameObject);
-        }
-        else
+        if (instance != null && instance != this)
         {
             Destroy(gameObject);
+            return;
         }
+
+        instance = this;
+        DontDestroyOnLoad(gameObject);
     }
-    void Start()
+
+    private void Start()
     {
-        
+        ConfigureConnectionApproval();
     }
-    public override void OnNetworkSpawn()
+
+    private void Update()
     {
-        if (IsServer)
+        RegisterServerCallbacksWhenReady();
+    }
+
+    private void OnDestroy()
+    {
+        if (instance == this)
+            instance = null;
+
+        if (networkManager != null && disconnectHandlerRegistered)
+            networkManager.ConnectionApprovalCallback = null;
+
+        if (networkManager != null && disconnectHandlerRegistered)
+            networkManager.OnClientDisconnectCallback -= HandleClientDisconnected;
+    }
+
+    private void ConfigureConnectionApproval()
+    {
+        networkManager = NetworkManager.Singleton;
+        if (networkManager == null)
         {
-            NetworkManager.Singleton.OnClientDisconnectCallback += HandleClientDisconnected;
-            SpawnChest();
+            Debug.LogError("Lab 6: no se encontró NetworkManager en la escena.");
+            return;
         }
 
-        if (!IsClient) return;
-        RequestPlayerSpawnRpc();
+        networkManager.NetworkConfig.ConnectionApproval = true;
+        networkManager.ConnectionApprovalCallback = ApproveConnection;
     }
 
-    public override void OnNetworkDespawn()
+    private void ApproveConnection(
+        NetworkManager.ConnectionApprovalRequest request,
+        NetworkManager.ConnectionApprovalResponse response)
     {
-        if (NetworkManager.Singleton != null)
-            NetworkManager.Singleton.OnClientDisconnectCallback -= HandleClientDisconnected;
+        bool assignGuardian = guardianClientId == ulong.MaxValue;
+        NetworkObject selectedPrefab = assignGuardian ? guardianPrefab : explorerPrefab;
 
-        // Permite iniciar otra sesión en la misma ejecución sin conservar IDs antiguos.
-        spawnedPlayers.Clear();
-        chestSpawned = false;
+        if (selectedPrefab == null)
+        {
+            response.Approved = false;
+            response.CreatePlayerObject = false;
+            response.Pending = false;
+            response.Reason = "El servidor no tiene configurados los prefabs Guardián/Explorador.";
+            return;
+        }
+
+        if (assignGuardian)
+            guardianClientId = request.ClientNetworkId;
+
+        response.Approved = true;
+        response.CreatePlayerObject = true;
+        response.PlayerPrefabHash = selectedPrefab.PrefabIdHash;
+        response.Position = GetSpawnPosition(request.ClientNetworkId);
+        response.Rotation = Quaternion.identity;
+        response.Pending = false;
+
+        Debug.Log($"Lab 6: cliente {request.ClientNetworkId} aprobado como " +
+                  (assignGuardian ? "GUARDIÁN" : "EXPLORADOR"));
+    }
+
+    private void RegisterServerCallbacksWhenReady()
+    {
+        if (networkManager == null)
+            ConfigureConnectionApproval();
+
+        if (networkManager != null && networkManager.IsServer && !disconnectHandlerRegistered)
+        {
+            networkManager.OnClientDisconnectCallback += HandleClientDisconnected;
+            disconnectHandlerRegistered = true;
+        }
+        else if (networkManager != null && !networkManager.IsServer && disconnectHandlerRegistered)
+        {
+            networkManager.OnClientDisconnectCallback -= HandleClientDisconnected;
+            disconnectHandlerRegistered = false;
+            guardianClientId = ulong.MaxValue;
+            activeChest = null;
+        }
     }
 
     private void HandleClientDisconnected(ulong clientId)
     {
-        if (IsServer)
-            spawnedPlayers.Remove(clientId);
-    }
-
-    private void SpawnChest()
-    {
-        if (chestSpawned || chestPrefab == null)
+        if (networkManager == null || !networkManager.IsServer)
             return;
 
-        NetworkObject chest = Instantiate(chestPrefab, new Vector3(0f, 0.75f, 4f), Quaternion.identity);
-        chest.Spawn(true);
-        chestSpawned = true;
+        List<NetworkObject> spawnedObjects = new(networkManager.SpawnManager.SpawnedObjectsList);
+        foreach (NetworkObject networkObject in spawnedObjects)
+        {
+            GrabbableCube cube = networkObject != null
+                ? networkObject.GetComponent<GrabbableCube>()
+                : null;
+
+            if (cube != null && cube.LogicalOwnerId == clientId)
+                cube.HandleOwnerDisconnected();
+        }
+
+        if (guardianClientId == clientId)
+            guardianClientId = ulong.MaxValue;
     }
 
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    private void RequestPlayerSpawnRpc(RpcParams rpcParams = default)
+    public bool TrySpawnGuardianChest(NetworkObject requester)
     {
-        ulong ownerId = rpcParams.Receive.SenderClientId;
-        if (!spawnedPlayers.Add(ownerId)) return;
+        if (!enableLab06Chest || networkManager == null || !networkManager.IsServer || requester == null || chestPrefab == null)
+            return false;
 
-        Vector3 spawnPosition = new Vector3((ownerId % 4) * 2.2f - 3.3f, 1f, 0f);
-        Transform player = Instantiate(playerPrefab, spawnPosition, Quaternion.identity);
-        // Además de asignar propiedad, lo registra en ConnectedClients[ownerId].PlayerObject.
-        // El cofre usa ese registro para validar distancia y bloqueo de apertura.
-        player.GetComponent<NetworkObject>().SpawnAsPlayerObject(ownerId, true);
+        PlayerRole role = requester.GetComponent<PlayerRole>();
+        if (role == null || !role.IsGuardian || requester.OwnerClientId != guardianClientId)
+            return false;
+
+        if (activeChest != null && activeChest.IsSpawned)
+            return false;
+
+        // Queda dentro del rango de apertura (3 m) incluso considerando la diferencia vertical.
+        Vector3 spawnPosition = requester.transform.position + requester.transform.forward * 2.2f;
+        spawnPosition.y = 0.75f;
+
+        activeChest = chestPrefab.InstantiateAndSpawn(
+            networkManager,
+            NetworkManager.ServerClientId,
+            destroyWithScene: true,
+            isPlayerObject: false,
+            forceOverride: false,
+            position: spawnPosition,
+            rotation: requester.transform.rotation);
+
+        return activeChest != null;
     }
 
-    void Update()
+    private static Vector3 GetSpawnPosition(ulong clientId)
     {
-        
+        return new Vector3((clientId % 4) * 2.2f - 3.3f, 1f, 0f);
     }
-    public static GameManager Instance => instance;
 
     private void OnGUI()
     {
         EnsureGuiStyles();
-        float width = Mathf.Min(430f, Screen.width - 32f);
-        GUILayout.BeginArea(new Rect(16f, 16f, width, 245f), GUI.skin.box);
-        GUILayout.Label("LAB 04 · COMBATE EN RED", titleStyle);
+        float width = Mathf.Min(455f, Screen.width - 32f);
+        GUILayout.BeginArea(new Rect(16f, 16f, width, 285f), GUI.skin.box);
+        GUILayout.Label(enableLab06Chest
+            ? "LAB 06 · COFRE DEL GUARDIÁN"
+            : "LAB 07 · INVENTARIO Y POOL DE RED", titleStyle);
 
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
         {
-            GUILayout.Label("Inicia una instancia como Host y otra como Cliente.", bodyStyle);
+            GUILayout.Label("El primer jugador será Guardián; los siguientes, Exploradores.", bodyStyle);
             GUILayout.Space(10f);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("INICIAR HOST", buttonStyle, GUILayout.Height(42f)))
@@ -107,13 +197,23 @@ public class GameManager : NetworkBehaviour
         }
         else
         {
-            string role = NetworkManager.Singleton.IsHost ? "HOST" :
-                NetworkManager.Singleton.IsServer ? "SERVIDOR" : "CLIENTE";
-            GUILayout.Label($"Conectado como {role} · ID {NetworkManager.Singleton.LocalClientId}", bodyStyle);
-            GUILayout.Label("SIMULADOR DE RED: 200 ms + 25 ms jitter", bodyStyle);
-            GUILayout.Label("WASD: mover    ESPACIO: atacar", bodyStyle);
-            GUILayout.Label("E: mantener para abrir    F: agarrar/soltar", bodyStyle);
-            GUILayout.Label("Clic izquierdo: lanzar cubo", bodyStyle);
+            string roleName = "CONECTANDO";
+            NetworkObject localPlayer = NetworkManager.Singleton.LocalClient?.PlayerObject;
+            if (localPlayer != null && localPlayer.TryGetComponent(out PlayerRole role))
+                roleName = role.DisplayName;
+
+            GUILayout.Label($"Rol: {roleName} · ID {NetworkManager.Singleton.LocalClientId}", bodyStyle);
+            if (enableLab06Chest)
+            {
+                GUILayout.Label("WASD mover · C crear cofre (Guardián) · E abrir", bodyStyle);
+                GUILayout.Label("F agarrar/soltar · G regalar · Q consumir", bodyStyle);
+                GUILayout.Label("Clic izquierdo lanzar · Espacio atacar", bodyStyle);
+            }
+            else
+            {
+                GUILayout.Label("WASD mover · H talar árbol cercano", bodyStyle);
+                GUILayout.Label("La madera se apila; el árbol reaparece desde el pool", bodyStyle);
+            }
             GUILayout.Space(8f);
             if (GUILayout.Button("DESCONECTAR", buttonStyle, GUILayout.Height(34f)))
                 NetworkManager.Singleton.Shutdown();
@@ -130,7 +230,7 @@ public class GameManager : NetworkBehaviour
         {
             fontSize = 22,
             fontStyle = FontStyle.Bold,
-            normal = { textColor = new Color(0.25f, 0.85f, 1f) },
+            normal = { textColor = new Color(1f, 0.78f, 0.2f) },
             margin = new RectOffset(10, 10, 8, 8)
         };
         bodyStyle = new GUIStyle(GUI.skin.label)

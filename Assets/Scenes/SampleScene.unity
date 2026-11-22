@@ -177,7 +177,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
-  playerPrefab: {fileID: 3703303637951152269, guid: 5186b81ec6109f04b961d6bc7491dccb, type: 3}
+  guardianPrefab: {fileID: 6392536786822313583, guid: a0493dcfa8ab99a459e9a9b2d69dabfa, type: 3}
+  explorerPrefab: {fileID: 6392536786822313583, guid: 07cd8143441b04b479aa05039ed5e517, type: 3}
   chestPrefab: {fileID: 920000000000000004, guid: c4e5700000004268ab2d45db0bcc196b, type: 3}
 --- !u!4 &106245718
 Transform:
@@ -722,7 +723,7 @@ MonoBehaviour:
       - {fileID: 11400000, guid: 702e099c834fe7d42898dd5dca585631, type: 2}
     TickRate: 30
     ClientConnectionBufferTimeout: 10
-    ConnectionApproval: 0
+    ConnectionApproval: 1
     ConnectionData: 
     EnableTimeResync: 0
     TimeResyncInterval: 30
@@ -768,6 +769,10 @@ PrefabInstance:
     - target: {fileID: 849229268088986570, guid: bfa63247ae8bfb1418a2b47a89aa2937, type: 3}
       propertyPath: m_Name
       value: Treenode
+      objectReference: {fileID: 0}
+    - target: {fileID: 849229268088986570, guid: bfa63247ae8bfb1418a2b47a89aa2937, type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3025762601322884219, guid: bfa63247ae8bfb1418a2b47a89aa2937, type: 3}
       propertyPath: m_InScenePlaced

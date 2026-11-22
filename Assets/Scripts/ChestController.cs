@@ -10,6 +10,8 @@ public class ChestController : NetworkBehaviour
     [SerializeField] private float holdDuration = 1.5f;
     [SerializeField] private float useRange = 3f;
     [SerializeField] private int cubeCount = 4;
+    [SerializeField] private float lidOpenAngle = -105f;
+    [SerializeField] private float lidSmoothingTime = 0.12f;
 
     public readonly NetworkVariable<ulong> CurrentOpener = new(
         ulong.MaxValue,
@@ -26,13 +28,28 @@ public class ChestController : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
-    private Transform lid;
+    private Transform lidPivot;
+    private float visualOpenProgress;
+
+    public bool CanInteract => IsSpawned && !IsOpen.Value;
 
     public override void OnNetworkSpawn()
     {
         BuildVisuals();
+
+        // Cada cofre instanciado comienza con un estado limpio. Esto se ejecuta
+        // solamente en el servidor y no afecta a un cofre ya abierto al entrar
+        // un cliente tardío.
+        if (IsServer)
+        {
+            CurrentOpener.Value = ulong.MaxValue;
+            OpenProgress.Value = 0f;
+            IsOpen.Value = false;
+        }
+
         IsOpen.OnValueChanged += OnOpenChanged;
         OpenProgress.OnValueChanged += OnProgressChanged;
+        visualOpenProgress = IsOpen.Value ? 1f : OpenProgress.Value;
         ApplyVisualState();
     }
 
@@ -57,10 +74,22 @@ public class ChestController : NetworkBehaviour
         OpenProgress.Value = Mathf.Clamp01(OpenProgress.Value + Time.deltaTime / holdDuration);
         if (OpenProgress.Value >= 1f)
         {
+            ulong lootOwnerId = CurrentOpener.Value;
             IsOpen.Value = true;
             CurrentOpener.Value = ulong.MaxValue;
-            SpawnLoot();
+            SpawnLoot(lootOwnerId);
         }
+    }
+
+    private void LateUpdate()
+    {
+        if (lidPivot == null || !IsSpawned)
+            return;
+
+        float targetProgress = IsOpen.Value ? 1f : OpenProgress.Value;
+        float speed = lidSmoothingTime > 0f ? 1f / lidSmoothingTime : float.MaxValue;
+        visualOpenProgress = Mathf.MoveTowards(visualOpenProgress, targetProgress, speed * Time.deltaTime);
+        ApplyVisualState();
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -109,7 +138,7 @@ public class ChestController : NetworkBehaviour
         OpenProgress.Value = 0f;
     }
 
-    private void SpawnLoot()
+    private void SpawnLoot(ulong ownerClientId)
     {
         if (cubePrefab == null)
             return;
@@ -119,14 +148,14 @@ public class ChestController : NetworkBehaviour
             float angle = i * Mathf.PI * 2f / cubeCount;
             Vector3 offset = new(Mathf.Cos(angle) * 1.35f, 1.4f, Mathf.Sin(angle) * 1.35f);
             NetworkObject cube = Instantiate(cubePrefab, transform.position + offset, Quaternion.identity);
-            cube.Spawn(true);
-            cube.GetComponent<GrabbableCube>().InitializeColor(i);
+            cube.SpawnWithOwnership(ownerClientId, true);
+            cube.GetComponent<GrabbableCube>().InitializeLoot(i, ownerClientId);
         }
     }
 
     private void BuildVisuals()
     {
-        if (lid != null) return;
+        if (lidPivot != null) return;
 
         GameObject body = GameObject.CreatePrimitive(PrimitiveType.Cube);
         body.name = "ChestBody";
@@ -136,14 +165,18 @@ public class ChestController : NetworkBehaviour
         body.GetComponent<Renderer>().material.color = new Color(0.35f, 0.16f, 0.04f);
         Destroy(body.GetComponent<Collider>());
 
+        GameObject pivotObject = new("ChestLidHinge");
+        pivotObject.transform.SetParent(transform, false);
+        pivotObject.transform.localPosition = new Vector3(0f, 0.79f, -0.72f);
+        lidPivot = pivotObject.transform;
+
         GameObject lidObject = GameObject.CreatePrimitive(PrimitiveType.Cube);
         lidObject.name = "ChestLid";
-        lidObject.transform.SetParent(transform, false);
-        lidObject.transform.localPosition = new Vector3(0f, 0.95f, 0.55f);
+        lidObject.transform.SetParent(lidPivot, false);
+        lidObject.transform.localPosition = new Vector3(0f, 0.16f, 0.72f);
         lidObject.transform.localScale = new Vector3(2.5f, 0.32f, 1.55f);
         lidObject.GetComponent<Renderer>().material.color = new Color(0.95f, 0.62f, 0.08f);
         Destroy(lidObject.GetComponent<Collider>());
-        lid = lidObject.transform;
 
         GameObject textObject = new("ChestLabel");
         textObject.transform.SetParent(transform, false);
@@ -163,8 +196,11 @@ public class ChestController : NetworkBehaviour
 
     private void ApplyVisualState()
     {
-        if (lid == null) return;
-        float angle = IsOpen.Value ? -105f : -55f * OpenProgress.Value;
-        lid.localRotation = Quaternion.Euler(angle, 0f, 0f);
+        if (lidPivot == null) return;
+        float easedProgress = Mathf.SmoothStep(0f, 1f, visualOpenProgress);
+        lidPivot.localRotation = Quaternion.Euler(
+            Mathf.Lerp(0f, lidOpenAngle, easedProgress),
+            0f,
+            0f);
     }
 }

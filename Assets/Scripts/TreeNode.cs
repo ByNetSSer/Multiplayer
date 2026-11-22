@@ -1,159 +1,82 @@
 using Unity.Netcode;
-using Unity.Collections;
 using UnityEngine;
 
 public class TreeNode : NetworkBehaviour
 {
-    // Sistema de tala y aparicion de troncos (tema posterior).
-    // Se conserva comentado para esta tarea, que solo pide reclamar el recurso.
-    // [SerializeField] private int maxLogs = 5;
-    // [SerializeField] private GameObject logPrefab;
-    //
-    // private NetworkVariable<int> currentLogs = new NetworkVariable<int>(
-    //     5,
-    //     NetworkVariableReadPermission.Everyone,
-    //     NetworkVariableWritePermission.Server
-    // );
+    [SerializeField] private int hitsToHarvest = 3;
+    [SerializeField] private float harvestRange = 3.5f;
+    [SerializeField] private ushort woodPerTree = 3;
 
-    private NetworkVariable<Color> treeColor = new NetworkVariable<Color>(
-        Color.gray,
-        NetworkVariableReadPermission.Everyone,
-        NetworkVariableWritePermission.Server
-    );
+    public readonly NetworkVariable<int> RemainingHits = new(3,
+        NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
-    private NetworkVariable<FixedString32Bytes> ownerName =
-        new NetworkVariable<FixedString32Bytes>(
-            new FixedString32Bytes("Libre"),
-            NetworkVariableReadPermission.Everyone,
-            NetworkVariableWritePermission.Server
-        );
-
-    private TextMesh ownerText;
+    private Renderer[] renderers;
+    private MaterialPropertyBlock propertyBlock;
+    private TextMesh statusText;
 
     public override void OnNetworkSpawn()
     {
-        // currentLogs.OnValueChanged += OnLogsChanged;
-        CreateOwnerText();
-
-        treeColor.OnValueChanged += OnColorChanged;
-        ownerName.OnValueChanged += OnOwnerNameChanged;
-
-        PaintTree(treeColor.Value);
-        ShowOwnerName(ownerName.Value);
+        CacheVisuals();
+        RemainingHits.OnValueChanged += OnHitsChanged;
+        if (IsServer) RemainingHits.Value = hitsToHarvest;
+        ApplyState(RemainingHits.Value);
     }
 
     public override void OnNetworkDespawn()
     {
-        // currentLogs.OnValueChanged -= OnLogsChanged;
-        treeColor.OnValueChanged -= OnColorChanged;
-        ownerName.OnValueChanged -= OnOwnerNameChanged;
+        RemainingHits.OnValueChanged -= OnHitsChanged;
+        ResetPooledState();
     }
 
-    private void Update()
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void HarvestRpc(RpcParams rpcParams = default)
     {
-        if (!IsSpawned) return;
+        if (!IsSpawned || RemainingHits.Value <= 0) return;
+        ulong sender = rpcParams.Receive.SenderClientId;
+        if (!NetworkManager.ConnectedClients.TryGetValue(sender, out NetworkClient client) ||
+            client.PlayerObject == null ||
+            Vector3.Distance(transform.position, client.PlayerObject.transform.position) > harvestRange) return;
 
-        if (Input.GetMouseButtonDown(0))
-        {
-            Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-            if (Physics.Raycast(ray, out RaycastHit hit))
-            {
-                if (hit.collider.gameObject == gameObject)
-                {
-                    InteractServerRpc();
-                }
-            }
-        }
+        RemainingHits.Value--;
+        if (RemainingHits.Value > 0) return;
+        PlayerInventory inventory = client.PlayerObject.GetComponent<PlayerInventory>();
+        if (inventory == null || !inventory.AddItem(ItemType.Wood, woodPerTree)) return;
+        Lab07ForestManager.Instance?.RecycleTree(this);
     }
 
-    [Rpc(SendTo.Server)]
-    public void InteractServerRpc(RpcParams rpcParams = default)
+    private void CacheVisuals()
     {
-        ulong who = rpcParams.Receive.SenderClientId;
-
-        if (treeColor.Value == Color.gray)
-        {
-            treeColor.Value = Color.red;
-
-            FixedString32Bytes newOwnerName = new FixedString32Bytes("Jugador ");
-            newOwnerName.Append(who);
-            ownerName.Value = newOwnerName;
-
-            NetworkObject.ChangeOwnership(who);
-            Debug.Log("Server: El arbol ahora le pertenece a: " + who);
-            return;
-        }
-
-        Debug.Log("Server: Te ganaron, este arbol ya tiene dueno");
-
-        // Sistema de tala y aparicion de troncos (tema posterior).
-        // if (currentLogs.Value <= 0)
-        // {
-        //     SpawnLogsServerRpc();
-        //     NetworkObject.Despawn(true);
-        //     Debug.Log("Server: Arbol destruido, logs spawned");
-        //     return;
-        // }
-        //
-        // currentLogs.Value -= 1;
-        // Debug.Log("Server: Talo! Logs restantes: " + currentLogs.Value);
+        renderers ??= GetComponentsInChildren<Renderer>(true);
+        propertyBlock ??= new MaterialPropertyBlock();
+        if (statusText != null) return;
+        GameObject label = new("ResourceStatus");
+        label.transform.SetParent(transform, false);
+        label.transform.localPosition = new Vector3(0f, 3.2f, 0f);
+        statusText = label.AddComponent<TextMesh>();
+        statusText.anchor = TextAnchor.MiddleCenter;
+        statusText.alignment = TextAlignment.Center;
+        statusText.fontSize = 38;
+        statusText.characterSize = 0.08f;
+        statusText.color = Color.white;
+        label.AddComponent<BillboardToCamera>();
     }
 
-    // [Rpc(SendTo.Server)]
-    // private void SpawnLogsServerRpc()
-    // {
-    //     for (int i = 0; i < maxLogs; i++)
-    //     {
-    //         Vector3 offset = new Vector3(
-    //             Random.Range(-1.5f, 1.5f),
-    //             0.5f,
-    //             Random.Range(-1.5f, 1.5f)
-    //         );
-    //
-    //         GameObject log = Instantiate(logPrefab, transform.position + offset, Quaternion.identity);
-    //         log.GetComponent<NetworkObject>().Spawn(true);
-    //     }
-    // }
+    private void OnHitsChanged(int previous, int current) => ApplyState(current);
 
-    private void OnColorChanged(Color previousColor, Color newColor)
+    private void ApplyState(int hits)
     {
-        PaintTree(newColor);
+        CacheVisuals();
+        float health = hitsToHarvest > 0 ? Mathf.Clamp01((float)hits / hitsToHarvest) : 0f;
+        Color color = Color.Lerp(new Color(0.35f, 0.18f, 0.05f), new Color(0.18f, 0.65f, 0.2f), health);
+        propertyBlock.SetColor("_BaseColor", color);
+        propertyBlock.SetColor("_Color", color);
+        foreach (Renderer currentRenderer in renderers) currentRenderer.SetPropertyBlock(propertyBlock);
+        if (statusText != null) statusText.text = $"ÁRBOL {hits}/{hitsToHarvest}\nH: talar";
     }
 
-    // private void OnLogsChanged(int previous, int current)
-    // {
-    //     ChangeColor();
-    // }
-
-    private void PaintTree(Color newColor)
+    private void ResetPooledState()
     {
-        GetComponent<Renderer>().material.color = newColor;
-    }
-
-    private void OnOwnerNameChanged(FixedString32Bytes previousName, FixedString32Bytes newName)
-    {
-        ShowOwnerName(newName);
-    }
-
-    private void ShowOwnerName(FixedString32Bytes newName)
-    {
-        ownerText.text = newName.ToString();
-    }
-
-    private void CreateOwnerText()
-    {
-        if (ownerText != null) return;
-
-        GameObject textObject = new GameObject("OwnerName");
-        textObject.transform.SetParent(transform);
-        textObject.transform.localPosition = new Vector3(0, 3, 0);
-        textObject.transform.localRotation = Quaternion.Euler(0, 180, 0);
-
-        ownerText = textObject.AddComponent<TextMesh>();
-        ownerText.anchor = TextAnchor.MiddleCenter;
-        ownerText.alignment = TextAlignment.Center;
-        ownerText.fontSize = 40;
-        ownerText.characterSize = 0.1f;
-        ownerText.color = Color.white;
+        if (IsServer) RemainingHits.Value = hitsToHarvest;
+        ApplyState(hitsToHarvest);
     }
 }
