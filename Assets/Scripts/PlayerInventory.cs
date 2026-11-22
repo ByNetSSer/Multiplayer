@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -26,7 +28,7 @@ public class PlayerInventory : NetworkBehaviour
 {
     [SerializeField] private ushort maxStack = 99;
     public NetworkList<InventorySlot> Slots { get; private set; }
-    private string inventoryText = "Inventario vacío";
+    private string inventoryText = "INVENTARIO\nVacío";
 
     private void Awake()
     {
@@ -38,12 +40,18 @@ public class PlayerInventory : NetworkBehaviour
     {
         Slots.OnListChanged += OnListChanged;
         RebuildOwnerUI();
+        if (IsOwner)
+            Lab09CloudBackpack.RegisterLocalInventory(this);
     }
 
     public override void OnNetworkDespawn()
     {
+        List<InventorySlot> snapshot = CopySlots();
+        Lab09ReconnectCoordinator.RecordInventoryDespawn(OwnerClientId, snapshot);
+        if (IsOwner)
+            Lab09CloudBackpack.SaveOwnedInventory(snapshot);
         Slots.OnListChanged -= OnListChanged;
-        inventoryText = "Inventario vacío";
+        inventoryText = "INVENTARIO\nVacío";
     }
 
     public bool AddItem(ItemType type, ushort amount)
@@ -77,6 +85,38 @@ public class PlayerInventory : NetworkBehaviour
             AddItem(ItemType.Wood, (ushort)Mathf.Min(amount, ushort.MaxValue));
     }
 
+    public List<InventorySlot> CopySlots()
+    {
+        List<InventorySlot> copy = new(Slots.Count);
+        for (int index = 0; index < Slots.Count; index++)
+            copy.Add(Slots[index]);
+        return copy;
+    }
+
+    public void ReplaceSlotsFromServer(IReadOnlyList<InventorySlot> restoredSlots)
+    {
+        if (!IsServer || restoredSlots == null) return;
+        Slots.Clear();
+        for (int index = 0; index < restoredSlots.Count; index++)
+            Slots.Add(restoredSlots[index]);
+    }
+
+    public void RequestCloudRestore(string serializedBackpack)
+    {
+        if (!IsOwner || string.IsNullOrWhiteSpace(serializedBackpack)) return;
+        RestoreCloudBackpackRpc(new FixedString4096Bytes(serializedBackpack));
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+    private void RestoreCloudBackpackRpc(FixedString4096Bytes serializedBackpack)
+    {
+        if (!Lab09ReconnectCoordinator.TryConsumeCloudRestore(OwnerClientId)) return;
+        List<InventorySlot> restoredSlots = new();
+        if (!Lab09BackpackSerializer.TryDeserialize(serializedBackpack.ToString(), restoredSlots)) return;
+        ReplaceSlotsFromServer(restoredSlots);
+        Debug.Log($"[Lab 9] Cloud Save restauró {restoredSlots.Count} casilla(s) para ClientId {OwnerClientId}.");
+    }
+
     private void OnListChanged(NetworkListEvent<InventorySlot> change)
     {
         if (IsOwner)
@@ -87,7 +127,7 @@ public class PlayerInventory : NetworkBehaviour
     private void RebuildOwnerUI()
     {
         if (!IsOwner) return;
-        if (Slots.Count == 0) { inventoryText = "Inventario vacío"; return; }
+        if (Slots.Count == 0) { inventoryText = "INVENTARIO\nVacío"; return; }
         inventoryText = "INVENTARIO";
         for (int i = 0; i < Slots.Count; i++)
             inventoryText += $"\n{Slots[i].Type}: {Slots[i].Amount}";
@@ -96,8 +136,14 @@ public class PlayerInventory : NetworkBehaviour
     private void OnGUI()
     {
         if (!IsOwner || !IsSpawned) return;
-        GUIStyle style = new(GUI.skin.box) { fontSize = 18, alignment = TextAnchor.UpperLeft,
-            normal = { textColor = Color.white } };
-        GUI.Box(new Rect(18f, 18f, 220f, 72f + Slots.Count * 22f), inventoryText, style);
+        GUIStyle style = new(GUI.skin.box)
+        {
+            fontSize = 18,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.UpperLeft,
+            padding = new RectOffset(12, 12, 10, 10),
+            normal = { textColor = Color.white }
+        };
+        GUI.Box(new Rect(18f, 310f, 250f, 82f + Slots.Count * 24f), inventoryText, style);
     }
 }

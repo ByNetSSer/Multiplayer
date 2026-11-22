@@ -25,6 +25,8 @@ public class GameManager : MonoBehaviour
 
     public static GameManager Instance => instance;
     public bool ChestLabEnabled => enableLab06Chest;
+    public NetworkObject GuardianPrefab => guardianPrefab;
+    public NetworkObject ExplorerPrefab => explorerPrefab;
 
     private void Awake()
     {
@@ -77,6 +79,9 @@ public class GameManager : MonoBehaviour
         NetworkManager.ConnectionApprovalRequest request,
         NetworkManager.ConnectionApprovalResponse response)
     {
+        if (Lab09ReconnectCoordinator.TryApprove(request, response, guardianPrefab, explorerPrefab))
+            return;
+
         bool assignGuardian = guardianClientId == ulong.MaxValue;
         NetworkObject selectedPrefab = assignGuardian ? guardianPrefab : explorerPrefab;
 
@@ -127,6 +132,11 @@ public class GameManager : MonoBehaviour
         if (networkManager == null || !networkManager.IsServer)
             return;
 
+        if (networkManager.ConnectedClients.TryGetValue(clientId, out NetworkClient disconnectedClient) &&
+            disconnectedClient.PlayerObject != null &&
+            disconnectedClient.PlayerObject.TryGetComponent(out PlayerInventory inventory))
+            Lab09ReconnectCoordinator.HandleDisconnect(clientId, inventory);
+
         List<NetworkObject> spawnedObjects = new(networkManager.SpawnManager.SpawnedObjectsList);
         foreach (NetworkObject networkObject in spawnedObjects)
         {
@@ -148,7 +158,10 @@ public class GameManager : MonoBehaviour
             return false;
 
         PlayerRole role = requester.GetComponent<PlayerRole>();
-        if (role == null || !role.IsGuardian || requester.OwnerClientId != guardianClientId)
+        bool isGuardian = Lab09ReconnectCoordinator.IsActive
+            ? Lab09ReconnectCoordinator.IsGuardian(requester.OwnerClientId)
+            : requester.OwnerClientId == guardianClientId;
+        if (role == null || !role.IsGuardian || !isGuardian)
             return false;
 
         if (activeChest != null && activeChest.IsSpawned)
@@ -180,19 +193,27 @@ public class GameManager : MonoBehaviour
         EnsureGuiStyles();
         float width = Mathf.Min(455f, Screen.width - 32f);
         GUILayout.BeginArea(new Rect(16f, 16f, width, 285f), GUI.skin.box);
-        GUILayout.Label(enableLab06Chest
-            ? "LAB 06 · COFRE DEL GUARDIÁN"
-            : "LAB 07 · INVENTARIO Y POOL DE RED", titleStyle);
+        bool isLab09 = Lab09ReconnectCoordinator.IsActive;
+        GUILayout.Label(isLab09
+            ? "LAB 09 · LA MOCHILA QUE VUELVE"
+            : enableLab06Chest
+                ? "LAB 06 · COFRE DEL GUARDIÁN"
+                : "LAB 07 · INVENTARIO Y POOL DE RED", titleStyle);
 
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
         {
             GUILayout.Label("El primer jugador será Guardián; los siguientes, Exploradores.", bodyStyle);
             GUILayout.Space(10f);
             GUILayout.BeginHorizontal();
+            bool canStart = !Lab09ReconnectCoordinator.IsActive || Lab09CloudBackpack.CanStart;
+            if (!canStart)
+                GUILayout.Label("Preparando Authentication / Cloud Save…", bodyStyle);
+            GUI.enabled = canStart;
             if (GUILayout.Button("INICIAR HOST", buttonStyle, GUILayout.Height(42f)))
-                NetworkManager.Singleton.StartHost();
+                StartNetwork(asHost: true);
             if (GUILayout.Button("INICIAR CLIENTE", buttonStyle, GUILayout.Height(42f)))
-                NetworkManager.Singleton.StartClient();
+                StartNetwork(asHost: false);
+            GUI.enabled = true;
             GUILayout.EndHorizontal();
         }
         else
@@ -203,7 +224,12 @@ public class GameManager : MonoBehaviour
                 roleName = role.DisplayName;
 
             GUILayout.Label($"Rol: {roleName} · ID {NetworkManager.Singleton.LocalClientId}", bodyStyle);
-            if (enableLab06Chest)
+            if (isLab09)
+            {
+                GUILayout.Label("WASD mover · H talar · C crear cofre · E abrir", bodyStyle);
+                GUILayout.Label("Reingresa para recuperar la mochila por PlayerId", bodyStyle);
+            }
+            else if (enableLab06Chest)
             {
                 GUILayout.Label("WASD mover · C crear cofre (Guardián) · E abrir", bodyStyle);
                 GUILayout.Label("F agarrar/soltar · G regalar · Q consumir", bodyStyle);
@@ -245,5 +271,16 @@ public class GameManager : MonoBehaviour
             fontStyle = FontStyle.Bold,
             margin = new RectOffset(8, 8, 4, 4)
         };
+    }
+
+    private void StartNetwork(bool asHost)
+    {
+        if (Lab09ReconnectCoordinator.IsActive)
+            Lab09CloudBackpack.PutIdentityInConnectionData(NetworkManager.Singleton);
+
+        if (asHost)
+            NetworkManager.Singleton.StartHost();
+        else
+            NetworkManager.Singleton.StartClient();
     }
 }

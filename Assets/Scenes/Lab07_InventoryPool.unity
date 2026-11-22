@@ -177,8 +177,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
-  guardianPrefab: {fileID: 6392536786822313583, guid: a0493dcfa8ab99a459e9a9b2d69dabfa, type: 3}
-  explorerPrefab: {fileID: 6392536786822313583, guid: 07cd8143441b04b479aa05039ed5e517, type: 3}
+  guardianPrefab: {fileID: 6392536786822313583, guid: 642c5e4ed21dee44ebb781cc479bd900, type: 3}
+  explorerPrefab: {fileID: 6392536786822313583, guid: 00a0e3f41821dbc45b820d5b11bdb0ab, type: 3}
   chestPrefab: {fileID: 920000000000000004, guid: c4e5700000004268ab2d45db0bcc196b, type: 3}
   enableLab06Chest: 0
 --- !u!4 &106245718
